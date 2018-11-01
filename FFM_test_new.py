@@ -199,7 +199,7 @@ def init_factor_test_csv(csv_fname):
     :param csv_fname: csv文件名（string）
     :return: None
     """
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/test_results/'
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/rlm_test/'
     csv_path = csv_path_base + csv_fname
     with open(csv_path, 'w', newline='') as f:
         row = ['test_date', 'coefficient', 'p_value', 'significant', 'direction']
@@ -215,7 +215,7 @@ def new_row_factor_test_csv(csv_fname, row):
     :param row: 新回归结果（list）
     :return: None
     """
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/test_results/'
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/rlm_test/'
     csv_path = csv_path_base + csv_fname
     with open(csv_path, 'a', newline='') as f:
         out = csv.writer(f)
@@ -251,66 +251,71 @@ def get_rlm_results_from_csv(csv_fname):
     :param csv_fname: csv文件名（str）
     :return: 某因子稳健回归测试结果（DataFrame）
     """
-    path = '/Users/yanxinyu/Desktop/fama-french-validation/test_results/{}'.format(csv_fname)
-    test_results_csv_data = pd.DataFrame(pd.read_csv(path, low_memory=False))
-    return test_results_csv_data
+    path = '/Users/yanxinyu/Desktop/fama-french-validation/rlm_test/{}'.format(csv_fname)
+    rlm_test_csv_data = pd.DataFrame(pd.read_csv(path, low_memory=False))
+    return rlm_test_csv_data
 
 
-def single_factor_test():
+def create_test_df(date, next_date):
+
+    """
+    ******************************数据获取***********************************************************
+    """
+    # 本月所有股票代码列表（上市六个月以上非金融公司）
+    stock_lst = [stock for stock in stock_codes if stock_pool_filter(stock, date) is True]
+
+    # 从csv文件获取本月和次月所有股票的基本面数据
+    dailybasic_df = get_dailybasic_data_from_csv(date)
+    dailybasic_df_next = get_dailybasic_data_from_csv(next_date)
+
+    # 将所需数据放入新的DataFrame（test_df）
+    test_df = pd.DataFrame(columns=['size', 'btm', 'return'])
+    for stock in stock_lst:
+        try:
+            total_mv, pb, close = dailybasic_df.loc[stock, ['total_mv', 'pb', 'close']]
+            size = np.log(total_mv)
+            book_to_market = 1 / pb
+
+            close_next = dailybasic_df_next.loc[stock, 'close']
+            monthly_return = np.log(close_next / close)
+            test_df.loc[stock] = [size, book_to_market, monthly_return]
+
+        # 如果本月或次月该股票不在股票池内则跳过（不是上市六个月以上非金融公司）
+        except KeyError:
+            continue
+
+    # 计算市场收益率（按市值加权的全市场收益）
+    test_df['weight'] = test_df['size'] / sum(test_df['size'])
+    market_return = sum(test_df['weight'] * test_df['return'])
+    test_df['excess_return'] = test_df['return'] - market_return
+
+    """
+    ******************************数据预处理**********************************************************
+    """
+    # 1. 离群值处理（MAD法）
+    test_df['size_rm_ab'] = remove_abnormal(test_df['size'], 10)
+    test_df['btm_rm_ab'] = remove_abnormal(test_df['btm'], 10)
+    test_df['ex_r_rm_ab'] = remove_abnormal(test_df['excess_return'], 10)
+
+    # 2. 数据标准化
+    test_df['standard_size'] = standardize(test_df['size_rm_ab'])
+    test_df['standard_btm'] = standardize(test_df['btm_rm_ab'])
+    test_df['standard_ex_return'] = standardize(test_df['ex_r_rm_ab'])
+
+    # 3. 缺失值处理
+    test_df.dropna(inplace=True)
+
+    return test_df
+
+
+def single_factor_rlm_to_csv():
 
     init_factor_test_csv(size_csv_fname)
     init_factor_test_csv(btm_csv_fname)
     for date, next_date in zip(month_end_trade_dates_lst[:-1], month_end_trade_dates_lst[1:]):
         print(date, next_date)
 
-        """
-        ******************************数据获取***********************************************************
-        """
-        # 本月所有股票代码列表（上市六个月以上非金融公司）
-        stock_lst = [stock for stock in stock_codes if stock_pool_filter(stock, date) is True]
-        print(len(stock_lst))
-
-        # 从csv文件获取本月和次月所有股票的基本面数据
-        dailybasic_df = get_dailybasic_data_from_csv(date)
-        dailybasic_df_next = get_dailybasic_data_from_csv(next_date)
-
-        # 将所需数据放入新的DataFrame（test_df）
-        test_df = pd.DataFrame(columns=['size', 'btm', 'return'])
-        for stock in stock_lst:
-            try:
-                total_mv, pb, close = dailybasic_df.loc[stock, ['total_mv', 'pb', 'close']]
-                size = np.log(total_mv)
-                book_to_market = 1 / pb
-
-                close_next = dailybasic_df_next.loc[stock, 'close']
-                monthly_return = np.log(close_next/close)
-                test_df.loc[stock] = [size, book_to_market, monthly_return]
-
-            # 如果本月或次月该股票不在股票池内则跳过（不是上市六个月以上非金融公司）
-            except KeyError:
-                continue
-
-        # 计算市场收益率（按市值加权的全市场收益）
-        test_df['weight'] = test_df['size']/sum(test_df['size'])
-        market_return = sum(test_df['weight'] * test_df['return'])
-        test_df['excess_return'] = test_df['return'] - market_return
-
-        """
-        ******************************数据预处理**********************************************************
-        """
-        # 1. 离群值处理（MAD法）
-        test_df['size_rm_ab'] = remove_abnormal(test_df['size'], 10)
-        test_df['btm_rm_ab'] = remove_abnormal(test_df['btm'], 10)
-        test_df['ex_r_rm_ab'] = remove_abnormal(test_df['excess_return'], 10)
-
-        # 2. 数据标准化
-        test_df['standard_size'] = standardize(test_df['size_rm_ab'])
-        test_df['standard_btm'] = standardize(test_df['btm_rm_ab'])
-        test_df['standard_ex_return'] = standardize(test_df['ex_r_rm_ab'])
-
-        # 3. 缺失值处理
-        test_df.dropna(inplace=True)
-        print(test_df)
+        test_df = create_test_df(date, next_date)
 
         """
         ******************************回归分析***********************************************************
@@ -319,7 +324,7 @@ def single_factor_test():
         rlm_results_to_csv(test_df['standard_btm'], btm_csv_fname, test_df, date)
 
 
-def single_factor_results(factor_csv_fname):
+def single_factor_rlm_results(factor_csv_fname):
     rlm_results = get_rlm_results_from_csv(factor_csv_fname)
     total_tests = len(rlm_results)
     rlm_results.dropna(inplace=True)
@@ -364,6 +369,119 @@ def single_factor_results(factor_csv_fname):
            reverse_percent, factor_direction, abs_posi_nega, keep_minus_reverse
 
 
+def print_rlm_results():
+    print('ln_tol_mv 单因子测试：')
+    single_factor_rlm_results(size_csv_fname)
+    print('\nBP 单因子测试:')
+    single_factor_rlm_results(btm_csv_fname)
+
+
+def split_to_5_groups(factor, test_df):
+    """
+    将test_df按照某个因子指标值等分为5组。
+    :param factor: test_df中指标名（string）
+    :return: test_df按照某个因子指标值等分为的5组（DataFrame）
+    """
+
+    test_df.sort_values(by=factor, ascending=True, inplace=True)
+    test_df.reset_index(inplace=True)
+
+    each_len = len(test_df[factor]) / 5
+    group1 = test_df.iloc[:int(each_len), :]
+    group2 = test_df.iloc[int(each_len): int(each_len * 2), :]
+    group3 = test_df.iloc[int(each_len * 2): int(each_len * 3), :]
+    group4 = test_df.iloc[int(each_len * 3): int(each_len * 4), :]
+    group5 = test_df.iloc[int(each_len * 4):, :]
+    return group1, group2, group3, group4, group5
+
+
+def group_test_results(group):
+    monthly_ex_return = round(group['excess_return'].mean(), 4)
+    tracking_error = round(group['excess_return'].std(), 4)
+    info_ratio = round(monthly_ex_return / tracking_error, 4)
+    return monthly_ex_return, tracking_error, info_ratio
+
+
+def init_group_test_csv(factor):
+    """
+    初始化分组回测结果的csv文件。
+    :param factor: 因子名（string）
+    :return: None
+    """
+    csv_path_extend = ['{}/group{}.csv'.format(factor, i) for i in range(1, 6)]
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/'
+    csv_path = [csv_path_base + extend for extend in csv_path_extend]
+
+    for path in csv_path:
+        with open(path, 'w', newline='') as f:
+            row = ['test_date', 'monthly_ex_return', 'tracking_error', 'IR']
+            out = csv.writer(f)
+            out.writerow(row)
+            f.close()
+
+
+def new_row_group_test_csv(csv_path_extend, row):
+    """
+    分组回测结果的csv文件写入新的回测结果。
+    :param csv_path_extend: csv末路径+csv文件名（string）
+    :param row: 新分组回测结果（list）
+    :return: None
+    """
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/'
+    csv_path = csv_path_base + csv_path_extend
+    with open(csv_path, 'a', newline='') as f:
+        out = csv.writer(f)
+        out.writerow(row)
+        f.close()
+
+
+def single_factor_group_to_csv(factor):
+
+    init_group_test_csv(factor)
+
+    # 做法：按照指标从小到大将市场分为5组，每月根据指标变化调整一次组合，然后计算各组相对于基准的超额收益和信息比率
+    for date, next_date in zip(month_end_trade_dates_lst[:-1], month_end_trade_dates_lst[1:]):
+        print(date, next_date)
+
+        test_df = create_test_df(date, next_date)
+        groups = list(split_to_5_groups(factor, test_df))
+        for i in range(5):
+            group = groups[i]
+            csv_path_extend = '{}/group{}.csv'.format(factor, i + 1)
+            row = [date] + list(group_test_results(group))
+            new_row_group_test_csv(csv_path_extend, row)
+
+
+def get_group_results_df_from_csv(factor):
+    """
+    从csv文件获取某因子分组回测结果。
+    :param factor: 因子名（str）
+    :return: 某因子稳健回归测试结果（元素为DataFrame的list）
+    """
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/{}/'.format(factor)
+    csv_paths = [csv_path_base + 'group{}.csv'.format(i) for i in range(1, 6)]
+    group_results_all_dates = [pd.DataFrame(pd.read_csv(path, low_memory=False)) for path in csv_paths]
+    return group_results_all_dates
+
+
+def calc_ex_return_and_IR(group_df):
+    group_ex_return = group_df['monthly_ex_return'].mean()
+    group_IR = group_df['IR'].mean()
+    return group_ex_return, group_IR
+
+
+def print_group_results(factor):
+
+    print('\n{}因子分组回测结果：'.format(factor))
+    group_results_all_dates = get_group_results_df_from_csv(factor)
+    group_test_result_df = pd.DataFrame(index=['group{}'.format(i) for i in range(1, 6)],
+                                        columns=['monthly_ex_return', 'IR'])
+    for i in range(1, 6):
+        group_test_result_df.loc['group{}'.format(i), ['monthly_ex_return', 'IR']] \
+            = round(group_results_all_dates[i - 1][['monthly_ex_return', 'IR']].mean(), 4)
+    print(group_test_result_df)
+
+
 if __name__ == "__main__":
 
     pro = ts.pro_api()
@@ -376,19 +494,35 @@ if __name__ == "__main__":
     # 获取每个月最后一个交易日的列表（每个元素为日期string，如'20050131'）
     month_end_trade_dates_lst = create_test_dates_list(2005, 1, 2018, 9)
 
+    # ！！！以下不要解除commet*****************
     # 从tusharePro获取每个测试日所有股票的基本面数据，并保存为csv文件（DailyBasic_data文件夹）
     # get_dailybasic_data_from_tusharepro(month_end_trade_dates_lst)
+    # ！！！以上不要解除commet*****************
 
     """
-    ******************************单因子测试*********************************************************
+    ******************************稳健回归*********************************************************
     """
     # 创建csv文件存储测试结果
     size_csv_fname = 'size_FactorTest.csv'
     btm_csv_fname = 'book-to-market_FactorTest.csv'
 
-    # single_factor_test()
+    # ！！！以下不要解除commet*****************
+    # single_factor_rlm_to_csv()
+    # ！！！以上不要解除commet*****************
 
-    print('ln_tol_mv 单因子测试：')
-    single_factor_results(size_csv_fname)
-    print('\nBP 单因子测试:')
-    single_factor_results(btm_csv_fname)
+    # print_rlm_results()
+
+    """
+    ******************************分组回测*********************************************************
+    """
+    # 创建csv文件存储测试结果
+    factor1 = 'size'
+    factor2 = 'btm'
+
+    # ！！！以下不要解除commet*****************
+    # single_factor_group_to_csv(factor1)
+    # single_factor_group_to_csv(factor2)
+    # ！！！以上不要解除commet*****************
+
+    print_group_results(factor1)
+    print_group_results(factor2)

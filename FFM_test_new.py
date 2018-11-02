@@ -24,6 +24,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
 import csv
+import os
 
 
 def get_all_stocks():
@@ -192,16 +193,17 @@ def create_test_df(date, next_date):
     dailybasic_df_next = get_dailybasic_data_from_csv(next_date)
 
     # 将所需数据放入新的DataFrame（test_df）
-    test_df = pd.DataFrame(columns=['size', 'btm', 'return'])
+    test_df = pd.DataFrame(columns=['size', 'btm', 'ep', 'return'])
     for stock in stock_lst:
         try:
-            total_mv, pb, close = dailybasic_df.loc[stock, ['total_mv', 'pb', 'close']]
+            total_mv, pb, pe, close = dailybasic_df.loc[stock, ['total_mv', 'pb', 'pe', 'close']]
             size = np.log(total_mv)
             book_to_market = 1 / pb
+            ep = 1 / pe
 
             close_next = dailybasic_df_next.loc[stock, 'close']
             monthly_return = np.log(close_next / close)
-            test_df.loc[stock] = [size, book_to_market, monthly_return]
+            test_df.loc[stock] = [size, book_to_market, ep, monthly_return]
 
         # 如果本月或次月该股票不在股票池内则跳过（不是上市六个月以上非金融公司）
         except KeyError:
@@ -218,10 +220,12 @@ def create_test_df(date, next_date):
     # 1. 离群值处理（MAD法）+ 2. 数据标准化
     test_df['standard_size'] = standardize(remove_abnormal(test_df['size'], 10))
     test_df['standard_btm'] = standardize(remove_abnormal(test_df['btm'], 10))
+    test_df['standard_ep'] = standardize(remove_abnormal(test_df['ep'], 10))
     test_df['standard_ex_return'] = standardize(remove_abnormal(test_df['excess_return'], 10))
 
     # 3. 缺失值处理
     test_df.dropna(inplace=True)
+    print(test_df)
 
     return test_df
 
@@ -405,17 +409,28 @@ def split_to_5_groups(factor, df):
     return group1, group2, group3, group4, group5
 
 
+def mkdir(path):
+    folder = os.path.exists(path)
+    if not folder:
+        print("make new folder...")
+        os.makedirs(path)
+        print("--- OK! ---")
+    else:
+        print("--- This folder exists! ---")
+
+
 def init_group_test_csv(factor):
     """
     初始化分组回测结果的csv文件，每个因子分成5组。
     :param factor: 因子名（string）
     :return: None
     """
-    csv_path_extend = ['{}/group{}.csv'.format(factor, i) for i in range(1, 6)]
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/'
-    csv_path = [csv_path_base + extend for extend in csv_path_extend]
+    csv_path_extend = ['/group{}.csv'.format(i) for i in range(1, 6)]
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/{}'.format(factor)
+    mkdir(csv_path_base)
+    csv_paths = [csv_path_base + extend for extend in csv_path_extend]
 
-    for path in csv_path:
+    for path in csv_paths:
         with open(path, 'w', newline='') as f:
             row = ['test_date', 'monthly_ex_return', 'tracking_error', 'IR']
             out = csv.writer(f)
@@ -507,12 +522,12 @@ def init_factor_corr_test_csv(f1, f2):
     :param f2: 因子2（string）
     :return: None
     """
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/'
-
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/corr_test/{}-{}'.format(f1, f2)
+    mkdir(csv_path_base)
     for group_i in range(1, 6):
         for subgroup_i in range(1, 6):
-            csv_path_extend = '{}-{}/{}{}-{}{}.csv'\
-                .format(f1, f2, f1, group_i, f2, subgroup_i)
+            csv_path_extend = '/{}{}-{}{}.csv'\
+                .format(f1, group_i, f2, subgroup_i)
             path = csv_path_base + csv_path_extend
             with open(path, 'w', newline='') as f:
                 row = ['test_date', 'monthly_ex_return', 'tracking_error', 'IR']
@@ -521,9 +536,24 @@ def init_factor_corr_test_csv(f1, f2):
                 f.close()
 
 
+def new_row_corr_test_to_csv(extend, row):
+    """
+    分组回测结果的csv文件写入新的回测结果。
+    :param extend: csv末路径+csv文件名（string）
+    :param row: 新分组回测结果（list）
+    :return: None
+    """
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/corr_test/'
+    csv_path = csv_path_base + extend
+    with open(csv_path, 'a', newline='') as f:
+        out = csv.writer(f)
+        out.writerow(row)
+        f.close()
+
+
 def factor_corr_to_csv(f1, f2):
     """
-    因子分层分组回测，并将结果写入csv文件（group_test文件夹）
+    因子分层分组回测，并将结果写入csv文件（corr_test文件夹）
     :param f1: 控制因子（string）
     :param f2: 测试因子（string）
     :return: None
@@ -550,13 +580,13 @@ def factor_corr_to_csv(f1, f2):
                 info_ratio = round(monthly_ex_return / tracking_error, 4)
 
                 new_row = [date, monthly_ex_return, tracking_error, info_ratio]
-                new_row_group_test_to_csv(csv_path_extend, new_row)
+                new_row_corr_test_to_csv(csv_path_extend, new_row)
 
 
 def print_factor_corr_results(f1, f2):
 
     print('\n{}-{}因子分组分层回测结果：'.format(f1, f2))
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/'
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/corr_test/'
     corr_test_result_df = pd.DataFrame(index=['{}{}'.format(f1, group_i) for group_i in range(1, 6)],
                                        columns=['{}{}'.format(f2, subgroup_i) for subgroup_i in range(1, 6)])
     for group_i in range(1, 6):
@@ -593,6 +623,7 @@ if __name__ == "__main__":
     """
     factor1 = 'size'
     factor2 = 'btm'
+    factor3 = 'ep'
 
     """
     ******************************稳健回归***************************
@@ -601,11 +632,13 @@ if __name__ == "__main__":
     # ！！！以下不要解除commet*****************
     # single_factor_rlm_test_to_csv(factor1)
     # single_factor_rlm_test_to_csv(factor2)
+    # single_factor_rlm_test_to_csv(factor3)
     # ！！！以上不要解除commet*****************
 
     # 打印稳健回归结果：
     # print_rlm_results(factor1)
     # print_rlm_results(factor2)
+    # print_rlm_results(factor3)
 
     """
     ******************************分组回测***************************
@@ -614,11 +647,13 @@ if __name__ == "__main__":
     # ！！！以下不要解除commet*****************
     # single_factor_group_test_to_csv(factor1)
     # single_factor_group_test_to_csv(factor2)
+    # single_factor_group_test_to_csv(factor3)
     # ！！！以上不要解除commet*****************
 
     # 打印分组回测结果：
     # print_group_results(factor1)
     # print_group_results(factor2)
+    # print_group_results(factor3)
 
     """
     ******************************因子相关性和替代**************************************************
@@ -626,9 +661,13 @@ if __name__ == "__main__":
     """
     ******************************因子分层***************************
     """
-    # 因子分层结果可见group_test文件夹
+    # 因子分层结果可见corr_test文件夹
     # ！！！以下不要解除commet*****************
     # factor_corr_to_csv(factor1, factor2)
+    # factor_corr_to_csv(factor1, factor3)
+    # factor_corr_to_csv(factor2, factor3)
     # ！！！以上不要解除commet*****************
 
     print_factor_corr_results(factor1, factor2)
+    print_factor_corr_results(factor1, factor3)
+    print_factor_corr_results(factor2, factor3)

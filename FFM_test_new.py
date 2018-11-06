@@ -34,7 +34,7 @@ def get_all_stocks():
     """
 
     # 获取所有股票列表
-    stock_pool = pro.stock_basic(list_status='L', fields='ts_code,name,industry,list_date,delist_date')
+    stock_pool = pro.stock_basic(list_status='L', fields='ts_code,name,industry,list_date')
 
     # 剔除金融类公司（银行、保险、证券）
     stock_pool = stock_pool[stock_pool.industry != '银行']
@@ -44,7 +44,6 @@ def get_all_stocks():
     # 将股票代码设为索引，将上市和退市日期转为datetime类型
     stock_pool.set_index('ts_code', inplace=True)
     stock_pool.list_date = pd.to_datetime(stock_pool.list_date, format='%Y%m%d', errors='ignore')
-    stock_pool.delist_date = pd.to_datetime(stock_pool.delist_date, format='%Y%m%d', errors='ignore')
 
     return stock_pool
 
@@ -79,10 +78,15 @@ def create_test_dates_list(start_yr, start_mo, end_yr, end_mo):
     # 每个月最后一个交易日的列表
     month_end_trade_dates = []
     for yr in range(start_yr, end_yr + 1):
-        if yr == end_yr:
+        if start_yr == end_yr:
+            month_lst = range(start_mo, end_mo + 1)
+        elif yr == end_yr:
             month_lst = range(1, end_mo + 1)
+        elif yr == start_yr:
+            month_lst = range(start_mo, 13)
         else:
             month_lst = range(1, 13)
+
         for mo in month_lst:
             if mo in [10, 11, 12]:
                 yr_mo = str(yr) + str(mo)
@@ -95,31 +99,21 @@ def create_test_dates_list(start_yr, start_mo, end_yr, end_mo):
     return month_end_trade_dates
 
 
-def get_dailybasic_data_from_tusharepro(day_lst):
+def get_daily_basic_data_from_csv(date):
     """
-    从tusharePro获取每个测试日所有股票的基本面数据，并保存为csv文件（DailyBasic_data文件夹）。
-    :param day_lst: 测试日列表（list）
-    :return: None
+    从csv文件调取该交易日所有股票的基本面数据。
+    :param date: 日期（str）
+    :return: 该交易日所有股票的基本面数据（DataFrame）
     """
-    for date in day_lst:
-        print(date)
+    path = '/Users/yanxinyu/Desktop/fama-french-validation/data/DailyBasic_data/DailyBasic_{}.csv'.format(date)
+    try:
+        dailybasic_df = pd.DataFrame(pd.read_csv(path, low_memory=False, index_col=0))
+    except FileNotFoundError:
         dailybasic_df = pro.daily_basic(trade_date=date)
         dailybasic_df.set_index('ts_code', inplace=True)
-        print(dailybasic_df)
-        path_base = '/Users/yanxinyu/Desktop/fama-french-validation'
-        path = path_base + '/DailyBasic_data/DailyBasic_{}.csv'.format(date)
+        print("Writing new daily basic data ({})...".format(date))
         dailybasic_df.to_csv(path)
-
-
-def get_dailybasic_data_from_csv(date):
-    """
-    从csv文件调取该测试日所有股票的基本面数据。
-    :param date: 日期（str）
-    :return: 该测试日所有股票的基本面数据（DataFrame）
-    """
-    path = '/Users/yanxinyu/Desktop/fama-french-validation/DailyBasic_data/DailyBasic_{}.csv'.format(date)
-    dailybasic_df = pd.DataFrame(pd.read_csv(path, low_memory=False))
-    dailybasic_df.set_index('ts_code', inplace=True)
+        print("--- OK! ---")
     return dailybasic_df
 
 
@@ -131,7 +125,7 @@ def stock_pool_filter(ts_code, test_date):
     :return: 布尔值，确定股票是否进入股票池
     """
     test_date = pd.to_datetime(test_date)
-    list_date = stock_pool.loc[ts_code, 'list_date']
+    list_date = all_stocks.loc[ts_code, 'list_date']
     listing_days = (test_date - list_date).days
 
     if listing_days >= 180:
@@ -186,11 +180,11 @@ def create_test_df(date, next_date):
     ******************************数据获取***********************************************************
     """
     # 本月所有股票代码列表（上市六个月以上非金融公司）
-    stock_lst = [stock for stock in stock_codes if stock_pool_filter(stock, date) is True]
+    stock_lst = [stock for stock in all_stocks_ts_code if stock_pool_filter(stock, date) is True]
 
     # 从csv文件获取本月和次月所有股票的基本面数据
-    dailybasic_df = get_dailybasic_data_from_csv(date)
-    dailybasic_df_next = get_dailybasic_data_from_csv(next_date)
+    dailybasic_df = get_daily_basic_data_from_csv(date)
+    dailybasic_df_next = get_daily_basic_data_from_csv(next_date)
 
     # 将所需数据放入新的DataFrame（test_df）
     test_df = pd.DataFrame(columns=['size', 'btm', 'ep', 'return'])
@@ -265,7 +259,7 @@ def init_rlm_test_csv(factor):
     :param factor: 因子名（string）
     :return: None
     """
-    csv_path = '/Users/yanxinyu/Desktop/fama-french-validation/rlm_test/{}_rlm_test.csv'.format(factor)
+    csv_path = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/rlm_test/{}_rlm_test.csv'.format(factor)
     with open(csv_path, 'w', newline='') as f:
         row = ['test_date', 'coefficient', 'p_value', 'significant', 'direction']
         out = csv.writer(f)
@@ -281,7 +275,7 @@ def new_row_rlm_test_to_csv(factor, test_df, date):
     :param date: 测试日期（本月最后一个交易日）
     :return: None
     """
-    csv_path = '/Users/yanxinyu/Desktop/fama-french-validation/rlm_test/{}_rlm_test.csv'.format(factor)
+    csv_path = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/rlm_test/{}_rlm_test.csv'.format(factor)
 
     # 1.每月将全市场（上市6个月以上非金融公司）的股票的指标值序列与次月超额收益序列做稳健回归
 
@@ -328,7 +322,7 @@ def get_rlm_results_from_csv(factor):
     :param factor: 因子名（string）
     :return: 某因子稳健回归测试结果（DataFrame）
     """
-    csv_path = '/Users/yanxinyu/Desktop/fama-french-validation/rlm_test/{}_rlm_test.csv'.format(factor)
+    csv_path = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/rlm_test/{}_rlm_test.csv'.format(factor)
     rlm_test_csv_data = pd.DataFrame(pd.read_csv(csv_path, low_memory=False))
     return rlm_test_csv_data
 
@@ -339,7 +333,12 @@ def print_rlm_results(factor):
     :param factor: 因子名（string）
     :return: 单因子稳健回归得到的指标值
     """
-    rlm_results = get_rlm_results_from_csv(factor)
+    try:
+        rlm_results = get_rlm_results_from_csv(factor)
+    except FileNotFoundError:
+        print("Writing new rlm test results for factor {}...".format(factor))
+        single_factor_rlm_test_to_csv(factor)
+        rlm_results = get_rlm_results_from_csv(factor)
     total_tests = len(rlm_results)
     rlm_results.dropna(inplace=True)
     rlm_results.reset_index(drop=True, inplace=True)
@@ -412,7 +411,7 @@ def split_to_5_groups(factor, df):
 def mkdir(path):
     folder = os.path.exists(path)
     if not folder:
-        print("make new folder...")
+        print("Making new folder...")
         os.makedirs(path)
         print("--- OK! ---")
     else:
@@ -426,7 +425,7 @@ def init_group_test_csv(factor):
     :return: None
     """
     csv_path_extend = ['/group{}.csv'.format(i) for i in range(1, 6)]
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/{}'.format(factor)
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/group_test/{}'.format(factor)
     mkdir(csv_path_base)
     csv_paths = [csv_path_base + extend for extend in csv_path_extend]
 
@@ -445,7 +444,7 @@ def new_row_group_test_to_csv(extend, row):
     :param row: 新分组回测结果（list）
     :return: None
     """
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/'
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/group_test/'
     csv_path = csv_path_base + extend
     with open(csv_path, 'a', newline='') as f:
         out = csv.writer(f)
@@ -486,7 +485,7 @@ def get_group_results_from_csv(factor):
     :param factor: 因子名（str）
     :return: 某因子稳健回归测试结果（元素为DataFrame的list）
     """
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/group_test/{}/'.format(factor)
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/group_test/{}/'.format(factor)
     csv_paths = [csv_path_base + 'group{}.csv'.format(i) for i in range(1, 6)]
     group_results_all_dates = [pd.DataFrame(pd.read_csv(path, low_memory=False)) for path in csv_paths]
     return group_results_all_dates
@@ -495,7 +494,13 @@ def get_group_results_from_csv(factor):
 def print_group_results(factor):
 
     print('\n{}因子分组回测结果：'.format(factor))
-    group_results_all_dates = get_group_results_from_csv(factor)
+    try:
+        group_results_all_dates = get_group_results_from_csv(factor)
+    except FileNotFoundError:
+        print("Writing new group test results for factor {}...".format(factor))
+        single_factor_group_test_to_csv(factor)
+        group_results_all_dates = get_group_results_from_csv(factor)
+
     group_test_result_df = pd.DataFrame(index=['group{}'.format(i) for i in range(1, 6)],
                                         columns=['monthly_ex_return', 'IR'])
     for i in range(1, 6):
@@ -522,7 +527,7 @@ def init_factor_corr_test_csv(f1, f2):
     :param f2: 因子2（string）
     :return: None
     """
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/corr_test/{}-{}'.format(f1, f2)
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/corr_test/{}-{}'.format(f1, f2)
     mkdir(csv_path_base)
     for group_i in range(1, 6):
         for subgroup_i in range(1, 6):
@@ -543,7 +548,7 @@ def new_row_corr_test_to_csv(extend, row):
     :param row: 新分组回测结果（list）
     :return: None
     """
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/corr_test/'
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/corr_test/'
     csv_path = csv_path_base + extend
     with open(csv_path, 'a', newline='') as f:
         out = csv.writer(f)
@@ -586,37 +591,36 @@ def factor_corr_to_csv(f1, f2):
 def print_factor_corr_results(f1, f2):
 
     print('\n{}-{}因子分组分层回测结果：'.format(f1, f2))
-    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/corr_test/'
+    csv_path_base = '/Users/yanxinyu/Desktop/fama-french-validation/factor_test/corr_test/'
     corr_test_result_df = pd.DataFrame(index=['{}{}'.format(f1, group_i) for group_i in range(1, 6)],
                                        columns=['{}{}'.format(f2, subgroup_i) for subgroup_i in range(1, 6)])
     for group_i in range(1, 6):
         for subgroup_i in range(1, 6):
             path = csv_path_base + '{}-{}/{}{}-{}{}.csv'.format(f1, f2, f1, group_i, f2, subgroup_i)
-            subgroup_return_df = pd.DataFrame(pd.read_csv(path, low_memory=False))
+            try:
+                subgroup_return_df = pd.DataFrame(pd.read_csv(path, low_memory=False))
+            except FileNotFoundError:
+                print("Writing new factor correlation test for factor {} and factor {}...".format(f1, f2))
+                factor_corr_to_csv(f1, f2)
+                subgroup_return_df = pd.DataFrame(pd.read_csv(path, low_memory=False))
             corr_test_result_df.loc['{}{}'.format(f1, group_i), '{}{}'.format(f2, subgroup_i)] \
                 = round(subgroup_return_df['monthly_ex_return'].mean(), 4)
     print(corr_test_result_df)
 
 
+pro = ts.pro_api()
+
+# 获取所有上市公司的股票代码
+all_stocks = get_all_stocks()
+all_stocks_ts_code = all_stocks.index
+
+
 if __name__ == "__main__":
-
-    pro = ts.pro_api()
-
-    # 获取所有上市公司的股票代码
-    stock_pool = get_all_stocks()
-    stock_codes = stock_pool.index
 
     # 测试时间：2005年1月-2018年8月（164个月）
     # 获取每个月最后一个交易日的列表（每个元素为日期string，如'20050131'）
     month_end_trade_dates_lst = create_test_dates_list(2005, 1, 2018, 9)
-
-    """
-    ******************************数据获取*********************************************************
-    """
-    # 从tusharePro获取每个测试日所有股票的基本面数据，并保存为csv文件（DailyBasic_data文件夹）
-    # ！！！以下不要解除commet*****************
-    # get_dailybasic_data_from_tusharepro(month_end_trade_dates_lst)
-    # ！！！以上不要解除commet*****************
+    print(month_end_trade_dates_lst)
 
     """
     ******************************单因子检验*******************************************************
@@ -628,29 +632,15 @@ if __name__ == "__main__":
     """
     ******************************稳健回归***************************
     """
-    # 稳健回归结果可见rlm_test文件夹
-    # ！！！以下不要解除commet*****************
-    # single_factor_rlm_test_to_csv(factor1)
-    # single_factor_rlm_test_to_csv(factor2)
-    # single_factor_rlm_test_to_csv(factor3)
-    # ！！！以上不要解除commet*****************
 
-    # 打印稳健回归结果：
-    # print_rlm_results(factor1)
-    # print_rlm_results(factor2)
-    # print_rlm_results(factor3)
+    print_rlm_results(factor1)
+    print_rlm_results(factor2)
+    print_rlm_results(factor3)
 
     """
     ******************************分组回测***************************
     """
-    # 分组回测结果可见group_test文件夹
-    # ！！！以下不要解除commet*****************
-    # single_factor_group_test_to_csv(factor1)
-    # single_factor_group_test_to_csv(factor2)
-    # single_factor_group_test_to_csv(factor3)
-    # ！！！以上不要解除commet*****************
 
-    # 打印分组回测结果：
     # print_group_results(factor1)
     # print_group_results(factor2)
     # print_group_results(factor3)
@@ -661,13 +651,7 @@ if __name__ == "__main__":
     """
     ******************************因子分层***************************
     """
-    # 因子分层结果可见corr_test文件夹
-    # ！！！以下不要解除commet*****************
-    # factor_corr_to_csv(factor1, factor2)
-    # factor_corr_to_csv(factor1, factor3)
-    # factor_corr_to_csv(factor2, factor3)
-    # ！！！以上不要解除commet*****************
 
-    print_factor_corr_results(factor1, factor2)
-    print_factor_corr_results(factor1, factor3)
-    print_factor_corr_results(factor2, factor3)
+    # print_factor_corr_results(factor1, factor2)
+    # print_factor_corr_results(factor1, factor3)
+    # print_factor_corr_results(factor2, factor3)
